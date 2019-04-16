@@ -9,6 +9,7 @@ import string
 import logging
 import ConfigParser
 import argparse
+import csv
 
 from threading import Thread
 #from impacket import smb, version, smb3, nt_errors, smbserver
@@ -289,7 +290,7 @@ class SMBMap():
             if self.smbconn[host].isGuestSession() > 0:
                 print '[+] Guest SMB session established on %s...' % (host)
             else:
-                print '[+] User SMB session establishd on %s...' % (host)
+                print '[+] User SMB session established on %s...' % (host)
             return True
 
         except Exception as e:
@@ -457,8 +458,13 @@ class SMBMap():
             print '\tNo mapped network drives'
         pass
 
-    def output_shares(self, host, lsshare, lspath, verbose=True, depth=255):
+    def output_shares(self, host, lsshare, lspath, verbose=True, depth=255, csvout=False, outfile=''):
+
         shareList = [lsshare] if lsshare else self.get_shares(host)
+
+        if outfile and csvout:
+            filehandle = open(outfile, 'ab')
+
         for share in shareList:
             error = 0
             pathList = {}
@@ -468,6 +474,8 @@ class SMBMap():
                 root = ntpath.normpath(root)
                 self.create_dir(host, share, root)
                 print '\t%s\tREAD, WRITE' % (share.ljust(50))
+                if csvout:
+                    filehandle.write(host + ', ' + share + ', READ/WRITE\n')
                 canWrite = True
                 try:
                     self.remove_dir(host, share, root)
@@ -485,6 +493,8 @@ class SMBMap():
                 readable = self.list_path(host, share, '', self.pattern, False)
                 if readable:
                     print '\t%s\tREAD ONLY' % (share.ljust(50))
+                    if csvout:
+                        filehandle.write(host + ', ' + share + ', READ ONLY\n')
                 else:
                     error += 1
 
@@ -521,6 +531,8 @@ class SMBMap():
 
             if error > 0 and verbose:
                 print '\t%s\tNO ACCESS' % (share.ljust(50))
+                if csvout:
+                    filehandle.write(host + ', ' + share + ', NO ACCESS\n')
 
     def get_shares(self, host):
         shareList = self.smbconn[host].listShares()
@@ -781,6 +793,11 @@ if __name__ == "__main__":
     sgroup.add_argument("-s", metavar="SHARE", dest='share', default="C$", help="Specify a share (default C$), ex 'C$'")
     sgroup.add_argument("-d", metavar="DOMAIN", dest='domain', default="WORKGROUP", help="Domain name (default WORKGROUP)")
     sgroup.add_argument("-P", metavar="PORT", dest='port', type=int, default=445, help="SMB port (default 445)")
+    sgroup.add_argument("-f", metavar="OUTFILE", dest='outfile', type=str, default='', help="A file to send output to. Specify format with -C or -X")
+    sgroup.add_argument("-C", dest='csvout', action="store_true", help="Use with -f to output results to a CSV file.")
+    sgroup.add_argument("-X", dest='xmlout', action="store_true", help="Use with -f to output results to an XML file.")
+    sgroup.add_argument("-J", dest='jsonout', action="store_true", help="Use with -f to output results to an JSON file.")
+
 
     sgroup2 = parser.add_argument_group("Command Execution", "Options for executing commands on the specified host")
     sgroup2.add_argument("-x", metavar="COMMAND", dest='command', help="Execute a command ex. 'ipconfig /all'")
@@ -866,6 +883,7 @@ if __name__ == "__main__":
     if args.pattern:
         mysmb.pattern = args.pattern
     counter = 0
+
     for host in mysmb.hosts.keys():
         if args.file_content_search:
             counter += 1
@@ -899,11 +917,19 @@ if __name__ == "__main__":
                 mysmb.exec_command(host, args.share, args.command, True, mysmb.hosts[host]['name'])
                 sys.exit()
 
-            if not args.dlPath and not args.upload and not args.delFile and not args.list_drives and not args.command and not args.file_content_search:
+            if not args.dlPath and not args.upload and not args.delFile and not args.list_drives and not args.command \
+                    and not args.file_content_search:
                 print '[+] IP: %s:%s\tName: %s' % (host, mysmb.hosts[host]['port'], mysmb.hosts[host]['name'].ljust(50))
                 print '\tDisk%s\tPermissions' % (' '.ljust(50))
                 print '\t----%s\t-----------' % (' '.ljust(50))
-                mysmb.output_shares(host, lsshare, lspath, args.verbose, args.depth)
+
+            elif args.csvout:
+                print '[+] Writing results in CSV format to %s.' % (args.outfile)
+                f = open(args.outfile, mode='w')
+                f.write("Host, Share, Access\n")
+
+                mysmb.output_shares(host, lsshare, lspath, args.verbose, args.depth, args.csvout, args.outfile)
+
             mysmb.logout(host)
 
         except SessionError as e:
